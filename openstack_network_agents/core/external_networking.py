@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: 2025 - Canonical Ltd
 # SPDX-License-Identifier: Apache-2.0
 
-import json
 import logging
 import time
 
@@ -28,7 +27,7 @@ def _del_interface_from_bridge(
     """
     if external_nic in ovs_cli.list_bridge_interfaces(external_bridge):
         logging.warning(f"Removing interface {external_nic} from {external_bridge}")
-        ovs_cli.vsctl("del-port", external_bridge, external_nic)
+        ovs_cli.del_port(external_bridge, external_nic)
     else:
         logging.warning(f"Interface {external_nic} not connected to {external_bridge}")
 
@@ -36,17 +35,10 @@ def _del_interface_from_bridge(
 def _get_external_ports_on_bridge(ovs_cli: OVSCli, bridge: str) -> list:
     """Get microstack managed external port on bridge.
 
-    :param bridge_name: Name of bridge.
+    :param ovs_cli: OVSCli instance.
+    :param bridge: Name of bridge.
     """
-    cmd_output = ovs_cli.vsctl(
-        "-f",
-        "json",
-        "find",
-        "Port",
-        "external-ids:microstack-function=ext-port",
-        retry=False,
-    )
-    output = json.loads(cmd_output)
+    output = ovs_cli.find("Port", "external-ids:microstack-function=ext-port")
     name_idx = output["headings"].index("name")
     external_nics = [r[name_idx] for r in output["data"]]
     bridge_ifaces = ovs_cli.list_bridge_interfaces(bridge)
@@ -76,15 +68,10 @@ def _add_interface_to_bridge(
         )
     else:
         logging.warning(f"Adding interface {external_nic} to {external_bridge}")
-        ovs_cli.vsctl(
-            "add-port",
+        ovs_cli.add_port(
             external_bridge,
             external_nic,
-            "--",
-            "set",
-            "Port",
-            external_nic,
-            "external-ids:microstack-function=ext-port",
+            external_ids={"microstack-function": "ext-port"},
         )
 
 
@@ -154,25 +141,18 @@ def _ensure_link_up(interface: str):
 def _enable_chassis_as_gateway(ovs_cli: OVSCli):
     """Enable OVS as an external chassis gateway."""
     logging.info("Enabling OVS as external gateway")
-    ovs_cli.vsctl(
-        "set",
+    ovs_cli.set(
         "open",
         ".",
-        "external_ids:ovn-cms-options=enable-chassis-as-gw",
+        "external_ids",
+        {"ovn-cms-options": "enable-chassis-as-gw"},
     )
 
 
 def _disable_chassis_as_gateway(ovs_cli: OVSCli):
-    """Enable OVS as an external chassis gateway."""
+    """Disable OVS as an external chassis gateway."""
     logging.info("Disabling OVS as external gateway")
-    ovs_cli.vsctl(
-        "remove",
-        "open",
-        ".",
-        "external_ids",
-        "ovn-cms-options",
-        "enable-chassis-as-gw",
-    )
+    ovs_cli.remove("open", ".", "external_ids", "ovn-cms-options")
 
 
 def configure_ovn_external_networking(
@@ -216,28 +196,24 @@ def configure_ovn_external_networking(
 
     for bridge in changes["removed_bridges"]:
         logging.info(f"Removing ovs bridge {bridge}")
-        ovs_cli.vsctl("del-br", bridge)
+        ovs_cli.del_bridge(bridge)
 
     for bridge in changes["added_bridges"]:
         logging.info(f"Adding ovs bridge {bridge}")
-        ovs_cli.vsctl(
-            "--may-exist",
-            "add-br",
+        ovs_cli.add_bridge(
             bridge,
-            "--",
-            "set",
-            "bridge",
-            bridge,
-            "datapath_type=system",
+            "system",
             "protocols=OpenFlow13,OpenFlow15",
         )
-
-    ovs_cli.vsctl(
-        "set",
+    ovs_cli.set(
         "open",
         ".",
-        "external_ids:ovn-bridge-mappings="
-        + ",".join(mapping.physnet_bridge_pair() for mapping in mappings),
+        "external_ids",
+        {
+            "ovn-bridge-mappings": ",".join(
+                mapping.physnet_bridge_pair() for mapping in mappings
+            )
+        },
     )
 
     for mapping in mappings:
@@ -254,12 +230,15 @@ def configure_ovn_external_networking(
             _del_external_nics_from_bridge(ovs_cli, mapping.bridge)
     machine_id = get_machine_id()
 
-    ovs_cli.vsctl(
-        "set",
+    ovs_cli.set(
         "open",
         ".",
-        "external_ids:ovn-chassis-mac-mappings="
-        + ",".join(mapping.physnet_mac_pair(machine_id) for mapping in mappings),
+        "external_ids",
+        {
+            "ovn-chassis-mac-mappings": ",".join(
+                mapping.physnet_mac_pair(machine_id) for mapping in mappings
+            )
+        },
     )
 
     if enable_chassis_as_gw:
