@@ -33,6 +33,6 @@ def setup_bridge(ctx: click.Context) -> None:
         config("network.physnet"),
         config("network.interface"),
         config("network.bridge-mapping"),
-        config("network.enable-chassis-as-gw") == "true",
+        config("network.enable-chassis-as-gw") in ("true", True),
         ovs_cli,
     )
