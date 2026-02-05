@@ -7,7 +7,10 @@ from snaphelpers import Snap
 
 from openstack_network_agents.core.bridge_datapath import OVSCli
 from openstack_network_agents.core.common import config_get, ovs_switch_socket
-from openstack_network_agents.core.constants import OVN_CHASSIS_PLUG
+from openstack_network_agents.core.constants import (
+    OVN_CHASSIS_PLUG,
+    OVS_CLI_DEFAULT_TIMEOUT,
+)
 from openstack_network_agents.core.external_networking import (
     configure_ovn_external_networking,
 )
@@ -30,7 +33,7 @@ def _configure_ovn_external_networking(snap: Snap) -> None:
     logger.info("Configuring OVN external networking.")
     config = config_get(snap)
     socket_path = ovs_switch_socket(snap)
-    ovs_cli = OVSCli(socket_path)
+    ovs_cli = OVSCli(socket_path, timeout=OVS_CLI_DEFAULT_TIMEOUT)
     configure_ovn_external_networking(
         config("network.bridge"),
         config("network.physnet"),
