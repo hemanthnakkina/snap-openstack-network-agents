@@ -521,8 +521,8 @@ class TestConfigureOvnExternalNetworking:
         # Setup - use a manager to track call order
         mocks = mock_external_networking_deps
         call_tracker = MagicMock()
-        mocks["del_interface_from_bridge"].side_effect = (
-            lambda *args: call_tracker.del_interface()
+        mocks["del_interface_from_bridge"].side_effect = lambda *args: (
+            call_tracker.del_interface()
         )
 
         def track_del_bridge(*args, **kwargs):
