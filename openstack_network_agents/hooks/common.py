@@ -9,6 +9,7 @@ from snaphelpers import Snap
 logger = logging.getLogger(__name__)
 
 UNSET = ""
+IPVANYNETWORK_UNSET = "0.0.0.0/0"
 DEFAULT_CONFIG = {
     "logging.debug": "false",
     # Deprecated
@@ -19,6 +20,8 @@ DEFAULT_CONFIG = {
     "network.physnet": "physnet1",
     "network.bridge-mapping": UNSET,
     "network.enable-chassis-as-gw": "true",
+    # Only useful for local network (no remote interface)
+    "network.external-bridge-address": IPVANYNETWORK_UNSET,
 }
 
 

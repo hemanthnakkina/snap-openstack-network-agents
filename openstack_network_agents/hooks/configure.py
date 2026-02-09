@@ -40,6 +40,7 @@ def _configure_ovn_external_networking(snap: Snap) -> None:
         config("network.interface"),
         config("network.bridge-mapping"),
         config("network.enable-chassis-as-gw") in ("true", True),
+        config("network.external-bridge-address"),
         ovs_cli,
     )
 

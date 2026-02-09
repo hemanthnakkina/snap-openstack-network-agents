@@ -10,6 +10,7 @@ import pytest
 from openstack_network_agents.core.external_networking import (
     configure_ovn_external_networking,
 )
+from openstack_network_agents.hooks.common import IPVANYNETWORK_UNSET
 
 # Module path for patching
 MODULE_PATH = "openstack_network_agents.core.external_networking"
@@ -51,6 +52,13 @@ def mock_external_networking_deps():
         patch(
             f"{MODULE_PATH}._disable_chassis_as_gateway"
         ) as mock_disable_chassis_as_gateway,
+        patch(f"{MODULE_PATH}._add_ip_to_interface") as mock_add_ip_to_interface,
+        patch(
+            f"{MODULE_PATH}._add_iptable_postrouting_rule"
+        ) as mock_add_iptable_postrouting_rule,
+        patch(
+            f"{MODULE_PATH}._delete_iptable_postrouting_rule"
+        ) as mock_delete_iptable_postrouting_rule,
     ):
         yield {
             "wait_for_interface": mock_wait_for_interface,
@@ -61,6 +69,9 @@ def mock_external_networking_deps():
             "get_machine_id": mock_get_machine_id,
             "enable_chassis_as_gateway": mock_enable_chassis_as_gateway,
             "disable_chassis_as_gateway": mock_disable_chassis_as_gateway,
+            "add_ip_to_interface": mock_add_ip_to_interface,
+            "add_iptable_postrouting_rule": mock_add_iptable_postrouting_rule,
+            "delete_iptable_postrouting_rule": mock_delete_iptable_postrouting_rule,
         }
 
 
@@ -84,6 +95,7 @@ class TestConfigureOvnExternalNetworking:
             interface="eth0",
             bridge_mapping="",
             enable_chassis_as_gw=True,
+            external_bridge_address=IPVANYNETWORK_UNSET,
             ovs_cli=mock_ovs_cli,
         )
 
@@ -129,6 +141,7 @@ class TestConfigureOvnExternalNetworking:
             interface="",
             bridge_mapping="",
             enable_chassis_as_gw=False,
+            external_bridge_address=IPVANYNETWORK_UNSET,
             ovs_cli=mock_ovs_cli,
         )
 
@@ -168,6 +181,7 @@ class TestConfigureOvnExternalNetworking:
             interface="eth0",
             bridge_mapping="",
             enable_chassis_as_gw=True,
+            external_bridge_address=IPVANYNETWORK_UNSET,
             ovs_cli=mock_ovs_cli,
         )
 
@@ -192,6 +206,7 @@ class TestConfigureOvnExternalNetworking:
             interface="eth0",
             bridge_mapping="br-new1:physnet1:eth0 br-new2:physnet2:eth1",
             enable_chassis_as_gw=True,
+            external_bridge_address=IPVANYNETWORK_UNSET,
             ovs_cli=mock_ovs_cli,
         )
 
@@ -229,6 +244,7 @@ class TestConfigureOvnExternalNetworking:
             interface="eth0",
             bridge_mapping="",
             enable_chassis_as_gw=True,
+            external_bridge_address=IPVANYNETWORK_UNSET,
             ovs_cli=mock_ovs_cli,
         )
 
@@ -263,6 +279,7 @@ class TestConfigureOvnExternalNetworking:
             interface="eth0",
             bridge_mapping="",
             enable_chassis_as_gw=True,
+            external_bridge_address=IPVANYNETWORK_UNSET,
             ovs_cli=mock_ovs_cli,
         )
 
@@ -290,6 +307,7 @@ class TestConfigureOvnExternalNetworking:
             interface="eth0",
             bridge_mapping="br-ex:physnet1:eth0 br-ex2:physnet2",
             enable_chassis_as_gw=True,
+            external_bridge_address=IPVANYNETWORK_UNSET,
             ovs_cli=mock_ovs_cli,
         )
 
@@ -341,6 +359,7 @@ class TestConfigureOvnExternalNetworking:
             interface="eth0",
             bridge_mapping="br-ex2:physnet2",
             enable_chassis_as_gw=True,
+            external_bridge_address=IPVANYNETWORK_UNSET,
             ovs_cli=mock_ovs_cli,
         )
 
@@ -379,6 +398,7 @@ class TestConfigureOvnExternalNetworking:
             interface="",
             bridge_mapping="",
             enable_chassis_as_gw=False,
+            external_bridge_address=IPVANYNETWORK_UNSET,
             ovs_cli=mock_ovs_cli,
         )
 
@@ -387,14 +407,7 @@ class TestConfigureOvnExternalNetworking:
         mocks["ensure_single_nic_on_bridge"].assert_not_called()
         mocks["ensure_link_up"].assert_not_called()
         mocks["del_external_nics_from_bridge"].assert_not_called()
-
-        # Verify empty mappings are set
-        mock_ovs_cli.set.assert_any_call(
-            "open",
-            ".",
-            "external_ids",
-            {"ovn-bridge-mappings": ""},
-        )
+        mock_ovs_cli.set.assert_not_called()
 
     def test_chassis_gateway_disabled(
         self,
@@ -413,6 +426,7 @@ class TestConfigureOvnExternalNetworking:
             interface="eth0",
             bridge_mapping="",
             enable_chassis_as_gw=False,
+            external_bridge_address=IPVANYNETWORK_UNSET,
             ovs_cli=mock_ovs_cli,
         )
 
@@ -448,6 +462,7 @@ class TestConfigureOvnExternalNetworking:
             interface="eth0",
             bridge_mapping="br-new:physnet-new:eth2",
             enable_chassis_as_gw=True,
+            external_bridge_address=IPVANYNETWORK_UNSET,
             ovs_cli=mock_ovs_cli,
         )
 
@@ -497,6 +512,7 @@ class TestConfigureOvnExternalNetworking:
             interface="eth0",
             bridge_mapping="br-ex2:physnet2",
             enable_chassis_as_gw=True,
+            external_bridge_address=IPVANYNETWORK_UNSET,
             ovs_cli=mock_ovs_cli,
         )
 
@@ -543,6 +559,7 @@ class TestConfigureOvnExternalNetworking:
             interface="eth0",
             bridge_mapping="",
             enable_chassis_as_gw=True,
+            external_bridge_address=IPVANYNETWORK_UNSET,
             ovs_cli=mock_ovs_cli,
         )
 
@@ -573,6 +590,7 @@ class TestConfigureOvnExternalNetworking:
             interface="eth0",
             bridge_mapping="",
             enable_chassis_as_gw=True,
+            external_bridge_address=IPVANYNETWORK_UNSET,
             ovs_cli=mock_ovs_cli,
         )
 
@@ -601,6 +619,7 @@ class TestConfigureOvnExternalNetworking:
             interface="eth0",
             bridge_mapping="",
             enable_chassis_as_gw=True,
+            external_bridge_address=IPVANYNETWORK_UNSET,
             ovs_cli=mock_ovs_cli,
         )
 
@@ -633,6 +652,7 @@ class TestConfigureOvnExternalNetworking:
             interface="",
             bridge_mapping="",
             enable_chassis_as_gw=False,
+            external_bridge_address=IPVANYNETWORK_UNSET,
             ovs_cli=mock_ovs_cli,
         )
 
@@ -664,5 +684,95 @@ class TestConfigureOvnExternalNetworking:
                 interface="eth0",
                 bridge_mapping="",
                 enable_chassis_as_gw=True,
+                external_bridge_address=IPVANYNETWORK_UNSET,
                 ovs_cli=mock_ovs_cli,
             )
+
+    def test_localnet_mode_with_multiple_mappings_fails(
+        self,
+        mock_external_networking_deps,
+        mock_ovs_cli,
+    ):
+        """Test that localnet mode with multiple bridge mappings returns early with warning."""
+        # Setup
+        mocks = mock_external_networking_deps
+        mocks["get_machine_id"].return_value = "test-machine-id"
+
+        # Execute - configure with multiple mappings and external_bridge_address set
+        # Using bridge_mapping parameter to create multiple mappings
+        configure_ovn_external_networking(
+            bridge="",
+            physnet="",
+            interface="",
+            bridge_mapping="br-ex:physnet1 br-ex2:physnet2",
+            enable_chassis_as_gw=True,
+            external_bridge_address="10.20.30.1/24",
+            ovs_cli=mock_ovs_cli,
+        )
+
+        # Verify that the function returns early without configuring anything
+        # No bridge mappings should be set since function returns early
+        mock_ovs_cli.set.assert_not_called()
+        mock_ovs_cli.add_bridge.assert_not_called()
+        mock_ovs_cli.del_bridge.assert_not_called()
+
+        # Localnet-specific operations should not be called
+        mocks["add_ip_to_interface"].assert_not_called()
+        mocks["add_iptable_postrouting_rule"].assert_not_called()
+        mocks["wait_for_interface"].assert_not_called()
+
+        # External network mode operations should not be called either
+        mocks["del_external_nics_from_bridge"].assert_not_called()
+        mocks["ensure_single_nic_on_bridge"].assert_not_called()
+        mocks["get_machine_id"].assert_not_called()
+        mocks["enable_chassis_as_gateway"].assert_not_called()
+        mocks["disable_chassis_as_gateway"].assert_not_called()
+
+    def test_localnet_mode_single_mapping_success(
+        self,
+        mock_external_networking_deps,
+        mock_ovs_cli,
+    ):
+        """Test successful localnet mode configuration with single bridge mapping."""
+        # Setup
+        mocks = mock_external_networking_deps
+        mocks["get_machine_id"].return_value = "test-machine-id"
+
+        # Execute - configure localnet with single mapping and external_bridge_address
+        configure_ovn_external_networking(
+            bridge="br-ex",
+            physnet="physnet1",
+            interface="",
+            bridge_mapping="",
+            enable_chassis_as_gw=False,  # This should be ignored in localnet mode
+            external_bridge_address="10.20.30.1/24",
+            ovs_cli=mock_ovs_cli,
+        )
+
+        # Verify bridge mappings are set
+        mock_ovs_cli.set.assert_any_call(
+            "open",
+            ".",
+            "external_ids",
+            {"ovn-bridge-mappings": "physnet1:br-ex"},
+        )
+
+        # Verify bridge is created or waited for
+        mocks["wait_for_interface"].assert_called_once_with("br-ex")
+
+        # Verify localnet-specific operations are called
+        mocks["add_ip_to_interface"].assert_called_once_with("br-ex", "10.20.30.1/24")
+        mocks["add_iptable_postrouting_rule"].assert_called_once_with(
+            "10.20.30.0/24",
+            "openstack-network-agents external network rule",
+        )
+
+        # Verify chassis is always enabled as gateway in localnet mode
+        mocks["enable_chassis_as_gateway"].assert_called_once_with(mock_ovs_cli)
+
+        # Verify external network mode operations are NOT called
+        mocks["del_external_nics_from_bridge"].assert_not_called()
+        mocks["ensure_single_nic_on_bridge"].assert_not_called()
+        mocks["ensure_link_up"].assert_not_called()
+        mocks["get_machine_id"].assert_not_called()
+        mocks["disable_chassis_as_gateway"].assert_not_called()

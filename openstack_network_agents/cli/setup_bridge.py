@@ -37,5 +37,6 @@ def setup_bridge(ctx: click.Context) -> None:
         config("network.interface"),
         config("network.bridge-mapping"),
         config("network.enable-chassis-as-gw") in ("true", True),
+        config("network.external-bridge-address"),
         ovs_cli,
     )
