@@ -34,6 +34,7 @@ apps:
       - network
       - network-control
       - ovn-chassis
+      - firewall-control
 
 parts:
   openstack-network-agents:
@@ -55,6 +56,6 @@ parts:
 
 hooks:
   install:
-    plugs: [network, network-control, ovn-chassis]
+    plugs: [network, network-control, ovn-chassis, firewall-control]
   configure:
-    plugs: [network, network-control, ovn-chassis]
+    plugs: [network, network-control, ovn-chassis, firewall-control]

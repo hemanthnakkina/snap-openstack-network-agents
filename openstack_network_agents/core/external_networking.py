@@ -1,10 +1,15 @@
 # SPDX-FileCopyrightText: 2025 - Canonical Ltd
 # SPDX-License-Identifier: Apache-2.0
 
+import errno
+import ipaddress
 import logging
+import re
+import subprocess
 import time
 
 from pyroute2 import IPRoute
+from pyroute2.netlink.exceptions import NetlinkError
 
 from openstack_network_agents.core.bridge_datapath import (
     OVSCli,
@@ -13,6 +18,7 @@ from openstack_network_agents.core.bridge_datapath import (
     resolve_ovs_changes,
     update_mappings_from_rename,
 )
+from openstack_network_agents.hooks.common import IPVANYNETWORK_UNSET
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +144,122 @@ def _ensure_link_up(interface: str):
     ipr.link("set", index=dev, state="up")  # type: ignore[attr-defined]
 
 
+def _add_ip_to_interface(interface: str, cidr: str) -> None:
+    """Add IP to interface and set link to up.
+
+    Deletes any existing IPs on the interface and set IP
+    of the interface to cidr.
+
+    :param interface: interface name
+    :type interface: str
+    :param cidr: network address
+    :type cidr: str
+    :return: None
+    """
+    logging.debug(f"Adding  ip {cidr} to {interface}")
+    ipr = IPRoute()
+    dev = ipr.link_lookup(ifname=interface)[0]  # type: ignore[attr-defined]
+    ip_mask = cidr.split("/")
+    try:
+        ipr.addr("add", index=dev, address=ip_mask[0], mask=int(ip_mask[1]))  # type: ignore[attr-defined]
+    except NetlinkError as e:
+        if e.code != errno.EEXIST:
+            raise e
+
+    ipr.link("set", index=dev, state="up")  # type: ignore[attr-defined]
+
+
+def _add_iptable_postrouting_rule(cidr: str, comment: str) -> None:
+    """Add postrouting iptable rule.
+
+    Add new postiprouting iptable rule, if it does not exist, to allow traffic
+    for cidr network.
+    """
+    executable = "iptables-legacy"
+    rule_def = [
+        "POSTROUTING",
+        "-w",
+        "-t",
+        "nat",
+        "-s",
+        cidr,
+        "-j",
+        "MASQUERADE",
+        "-m",
+        "comment",
+        "--comment",
+        comment,
+    ]
+    found = False
+    try:
+        cmd = [executable, "--check"]
+        cmd.extend(rule_def)
+        logging.debug(cmd)
+        subprocess.run(cmd, capture_output=True, check=True)
+    except subprocess.CalledProcessError as e:
+        # --check has an RC of 1 if the rule does not exist
+        if e.returncode == 1 and re.search(
+            r"No.*match by that name", e.stderr.decode()
+        ):
+            logging.debug(f"Postrouting iptable rule for {cidr} missing")
+            found = False
+        else:
+            logging.warning(f"Failed to lookup postrouting iptable rule for {cidr}")
+    else:
+        # If not exception was raised then the rule exists.
+        logging.debug(f"Found existing postrouting rule for {cidr}")
+        found = True
+    if not found:
+        logging.debug(f"Adding postrouting iptable rule for {cidr}")
+        cmd = [executable, "--append"]
+        cmd.extend(rule_def)
+        logging.debug(cmd)
+        subprocess.check_call(cmd)
+
+
+def _delete_iptable_postrouting_rule(comment: str) -> None:
+    """Delete postrouting iptable rules based on comment."""
+    logging.debug("Resetting iptable rules added by openstack-hypervisor")
+    if not comment:
+        return
+
+    try:
+        cmd = [
+            "iptables-legacy",
+            "-t",
+            "nat",
+            "-n",
+            "-v",
+            "-L",
+            "POSTROUTING",
+            "--line-numbers",
+        ]
+        process = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        iptable_rules = process.stdout.strip()
+
+        line_numbers = [
+            line.split(" ")[0] for line in iptable_rules.split("\n") if comment in line
+        ]
+
+        # Delete line numbers in descending order
+        # If a lower numbered line number is deleted, iptables
+        # changes lines numbers of high numbered rules.
+        line_numbers.sort(reverse=True)
+        for number in line_numbers:
+            delete_rule_cmd = [
+                "iptables-legacy",
+                "-t",
+                "nat",
+                "-D",
+                "POSTROUTING",
+                number,
+            ]
+            logging.debug(f"Deleting iptable rule: {delete_rule_cmd}")
+            subprocess.check_call(delete_rule_cmd)
+    except subprocess.CalledProcessError as e:
+        logging.info(f"Error in deletion of IPtable rule: {e.stderr}")
+
+
 def _enable_chassis_as_gateway(ovs_cli: OVSCli):
     """Enable OVS as an external chassis gateway."""
     logging.info("Enabling OVS as external gateway")
@@ -161,6 +283,7 @@ def configure_ovn_external_networking(
     interface: str,
     bridge_mapping: str,
     enable_chassis_as_gw: bool,
+    external_bridge_address: str,
     ovs_cli: OVSCli,
 ) -> None:
     """Configure OVN external networking.
@@ -170,6 +293,7 @@ def configure_ovn_external_networking(
     :param interface: network.interface configuration
     :param bridge_mapping: network.bridge-mapping configuration
     :param enable_chassis_as_gw: network.enable-chassis-as-gw configuration (boolean)
+    :param external_bridge_address: network.external-bridge-address configuration
     :param ovs_cli: OVS CLI interface
     :return: None
     """
@@ -181,12 +305,23 @@ def configure_ovn_external_networking(
         interface,
         bridge_mapping,
     )
+    if not mappings:
+        logging.info(
+            "No valid bridge mappings found; skipping external network configuration."
+        )
+        return
     current_mappings = detect_current_mappings(ovs_cli)
 
     changes = resolve_ovs_changes(current_mappings, mappings)
     logging.debug("OVS external networking changes: %s", changes)
 
     mappings = update_mappings_from_rename(mappings, changes["renamed_bridges"])
+
+    if len(mappings) > 1 and external_bridge_address != IPVANYNETWORK_UNSET:
+        logging.warning(
+            "External bridge address configuration is supported only for localnet (i.e. no external nics)."
+        )
+        return
 
     for bridge, change in changes["interface_changes"].items():
         for iface in change["removed"]:
@@ -218,6 +353,21 @@ def configure_ovn_external_networking(
 
     for mapping in mappings:
         _wait_for_interface(mapping.bridge)
+
+    comment = "openstack-network-agents external network rule"
+    if len(mappings) == 1 and external_bridge_address != IPVANYNETWORK_UNSET:
+        # We only support localnet mode for a single virtual physnet
+        mapping = mappings[0]
+        logging.info(f"configuring external bridge {mapping.bridge}")
+        _add_ip_to_interface(mapping.bridge, external_bridge_address)
+        external_network = ipaddress.ip_interface(external_bridge_address).network
+        _add_iptable_postrouting_rule(str(external_network), comment)
+        # This is always gateway as single node only with localnet
+        _enable_chassis_as_gateway(ovs_cli)
+        return
+
+    # We're in external net mode
+    _delete_iptable_postrouting_rule(comment)
 
     for mapping in mappings:
         logging.info(f"Resetting external bridge {mapping.bridge} configuration")

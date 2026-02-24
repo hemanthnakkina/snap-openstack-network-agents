@@ -13,8 +13,6 @@ This snap provides helpers for Sunbeam **network-role** nodes. It is designed to
 sudo snap install openstack-network-agents
 ```
 
-**NOTE:** Classic confinement is required to access `/var/run/openvswitch/db.sock`.
-
 ## Usage
 
 The snap exposes the `openstack-network-agents` command with several subcommands:
