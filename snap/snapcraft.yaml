@@ -7,7 +7,7 @@ description: |
 base: core24
 version: "2024.1"
 license: Apache-2.0
-grade: devel
+grade: stable
 confinement: strict
 
 platforms:
