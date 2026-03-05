@@ -1,9 +1,25 @@
 name: openstack-network-agents
-summary: OVS provider-bridge helper for OpenStack Network role
+summary: OpenStack networking agents and helpers for OVS/OVN environments
 description: |
-  Provides a helper to configure a provider bridge and OVN physnet mapping.
-  This snap is meant to be driven by a subordinate charm and does not ship
-  neutron-ovn-metadata-agent.
+  A unified snap that packages the networking agents and utilities needed
+  to run OpenStack on hosts with Open vSwitch (OVS) and OVN.
+
+  Currently provides:
+    - OVS provider-bridge management: automatically creates bridges, attaches
+      physical NICs, and configures OVN physnet mappings for external network
+      connectivity.
+    - NIC discovery: identifies candidate uplink interfaces, filtering out
+      virtual devices and bond members.
+    - A CLI for manual inspection and one-shot configuration
+      (setup-bridge, show-bridge-setup, list-nics).
+
+  The snap connects to MicroOVN via the ovn-chassis content interface and
+  is typically driven by a Juju subordinate charm through snap configuration
+  keys.
+issues:
+  - https://bugs.launchpad.net/snap-openstack-network-agents
+source-code:
+  - https://github.com/canonical/snap-openstack-network-agents
 base: core24
 version: "2024.1"
 license: Apache-2.0
