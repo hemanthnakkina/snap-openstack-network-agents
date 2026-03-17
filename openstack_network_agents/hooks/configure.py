@@ -12,6 +12,7 @@ from openstack_network_agents.core.constants import (
     OVS_CLI_DEFAULT_TIMEOUT,
 )
 from openstack_network_agents.core.external_networking import (
+    configure_ovn_encap_ip,
     configure_ovn_external_networking,
 )
 from openstack_network_agents.hooks.common import (
@@ -34,6 +35,10 @@ def _configure_ovn_external_networking(snap: Snap) -> None:
     config = config_get(snap)
     socket_path = ovs_switch_socket(snap)
     ovs_cli = OVSCli(socket_path, timeout=OVS_CLI_DEFAULT_TIMEOUT)
+    configure_ovn_encap_ip(
+        config("network.ip-address"),
+        ovs_cli,
+    )
     configure_ovn_external_networking(
         config("network.bridge"),
         config("network.physnet"),

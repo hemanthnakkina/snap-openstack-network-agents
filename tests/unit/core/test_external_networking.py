@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from openstack_network_agents.core.external_networking import (
+    configure_ovn_encap_ip,
     configure_ovn_external_networking,
 )
 from openstack_network_agents.hooks.common import IPVANYNETWORK_UNSET
@@ -73,6 +74,30 @@ def mock_external_networking_deps():
             "add_iptable_postrouting_rule": mock_add_iptable_postrouting_rule,
             "delete_iptable_postrouting_rule": mock_delete_iptable_postrouting_rule,
         }
+
+
+class TestConfigureOvnEncapIp:
+    """Tests for the configure_ovn_encap_ip function."""
+
+    def test_sets_encap_ip(self, mock_ovs_cli):
+        """Test that encap IP and type are set when ip_address is provided."""
+        configure_ovn_encap_ip("10.0.0.1", mock_ovs_cli)
+
+        mock_ovs_cli.set.assert_called_once_with(
+            "open",
+            ".",
+            "external_ids",
+            {
+                "ovn-encap-type": "geneve",
+                "ovn-encap-ip": "10.0.0.1",
+            },
+        )
+
+    def test_skips_when_empty(self, mock_ovs_cli):
+        """Test that nothing is set when ip_address is empty."""
+        configure_ovn_encap_ip("", mock_ovs_cli)
+
+        mock_ovs_cli.set.assert_not_called()
 
 
 class TestConfigureOvnExternalNetworking:
