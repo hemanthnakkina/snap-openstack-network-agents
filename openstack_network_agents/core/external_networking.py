@@ -277,6 +277,31 @@ def _disable_chassis_as_gateway(ovs_cli: OVSCli):
     ovs_cli.remove("open", ".", "external_ids", "ovn-cms-options")
 
 
+def configure_ovn_encap_ip(
+    ip_address: str,
+    ovs_cli: OVSCli,
+) -> None:
+    """Configure OVN encapsulation IP.
+
+    :param ip_address: IP address to use for OVN encapsulation.
+    :param ovs_cli: OVS CLI interface.
+    :return: None
+    """
+    if not ip_address:
+        logger.info("OVN encap IP not configured, skipping.")
+        return
+    logger.info("Configuring OVN encap IP: %s", ip_address)
+    ovs_cli.set(
+        "open",
+        ".",
+        "external_ids",
+        {
+            "ovn-encap-type": "geneve",
+            "ovn-encap-ip": ip_address,
+        },
+    )
+
+
 def configure_ovn_external_networking(
     bridge: str,
     physnet: str,

@@ -19,6 +19,7 @@ DEFAULT_CONFIG = {
     # Deprecated
     "network.physnet": "physnet1",
     "network.bridge-mapping": UNSET,
+    "network.ip-address": UNSET,
     "network.enable-chassis-as-gw": "true",
     # Only useful for local network (no remote interface)
     "network.external-bridge-address": IPVANYNETWORK_UNSET,
