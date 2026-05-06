@@ -68,6 +68,9 @@ parts:
     override-build: |
       craftctl default
       snap-helpers write-hooks
+      # purge external symlinks created by uv venv
+      rm -f "$CRAFT_PART_INSTALL/bin/python"
+      rm -f "$CRAFT_PART_INSTALL/bin/python3.14"
 
 hooks:
   install:
