@@ -22,6 +22,7 @@ source-code:
   - https://github.com/canonical/snap-openstack-network-agents
 base: core24
 version: "2024.1"
+adopt-info: snap-version
 license: Apache-2.0
 grade: stable
 confinement: strict
@@ -53,6 +54,21 @@ apps:
       - firewall-control
 
 parts:
+  snap-version:
+    plugin: nil
+    build-packages:
+      - git
+    override-build: |
+      set -eu
+      craftctl default
+      gitref="$(git -C "$CRAFT_PROJECT_DIR" rev-parse --short=8 HEAD)"
+      version="$(craftctl get version)-${gitref}"
+      git -C "$CRAFT_PROJECT_DIR" update-index -q --refresh
+      if ! git -C "$CRAFT_PROJECT_DIR" diff-index --quiet HEAD --; then
+        version="${version}+dirty"
+      fi
+      craftctl set version="${version}"
+
   openstack-network-agents:
     plugin: python
     source: .
