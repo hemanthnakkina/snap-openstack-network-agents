@@ -32,6 +32,9 @@ platforms:
   arm64:
   s390x:
 
+environment:
+  PYTHONPATH: $SNAP/usr/lib/python3.14:$SNAP/usr/lib/python3.14/site-packages:$SNAP/lib/python3.14:$SNAP/lib/python3.14/site-packages:$SNAP/usr/lib/python3/dist-packages:$PYTHONPATH
+
 plugs:
   network-control:
     interface: network-control
@@ -79,7 +82,7 @@ parts:
       - rustc
     stage-packages:
       - openvswitch-switch
-      - python3-venv
+      - python3.14-minimal
     override-build: |
       craftctl default
       snap-helpers write-hooks
