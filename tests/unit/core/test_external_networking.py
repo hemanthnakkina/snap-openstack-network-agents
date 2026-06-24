@@ -8,6 +8,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from openstack_network_agents.core.external_networking import (
+    _get_unmanaged_interfaces_on_bridge,
+    _is_managed_port,
     configure_ovn_encap_ip,
     configure_ovn_external_networking,
 )
@@ -39,6 +41,10 @@ def mock_external_networking_deps():
         patch(
             f"{MODULE_PATH}._del_interface_from_bridge"
         ) as mock_del_interface_from_bridge,
+        patch(f"{MODULE_PATH}._is_managed_port") as mock_is_managed_port,
+        patch(
+            f"{MODULE_PATH}._get_unmanaged_interfaces_on_bridge"
+        ) as mock_get_unmanaged_interfaces_on_bridge,
         patch(
             f"{MODULE_PATH}._ensure_single_nic_on_bridge"
         ) as mock_ensure_single_nic_on_bridge,
@@ -61,9 +67,18 @@ def mock_external_networking_deps():
             f"{MODULE_PATH}._delete_iptable_postrouting_rule"
         ) as mock_delete_iptable_postrouting_rule,
     ):
+        # By default, treat interfaces as managed by this snap so existing
+        # removal tests keep their behavior. Tests covering operator-managed
+        # interfaces override this explicitly.
+        mock_is_managed_port.return_value = True
+        # By default, bridges have no operator-managed interfaces, so existing
+        # bridge-removal tests keep their behavior.
+        mock_get_unmanaged_interfaces_on_bridge.return_value = []
         yield {
             "wait_for_interface": mock_wait_for_interface,
             "del_interface_from_bridge": mock_del_interface_from_bridge,
+            "is_managed_port": mock_is_managed_port,
+            "get_unmanaged_interfaces_on_bridge": mock_get_unmanaged_interfaces_on_bridge,
             "ensure_single_nic_on_bridge": mock_ensure_single_nic_on_bridge,
             "ensure_link_up": mock_ensure_link_up,
             "del_external_nics_from_bridge": mock_del_external_nics_from_bridge,
@@ -214,6 +229,52 @@ class TestConfigureOvnExternalNetworking:
         mock_ovs_cli.del_bridge.assert_any_call("br-old1")
         mock_ovs_cli.del_bridge.assert_any_call("br-old2")
 
+    def test_bridge_with_unmanaged_interfaces_not_removed(
+        self,
+        mock_external_networking_deps,
+        mock_ovs_cli,
+    ):
+        """A bridge with operator-managed interfaces is not torn down.
+
+        Even when a physnet is dropped from config, deleting a bridge that
+        still carries operator-attached interfaces would destroy host
+        connectivity (LP: #2150222).
+        """
+        # Setup
+        mocks = mock_external_networking_deps
+        mocks["get_machine_id"].return_value = "test-machine-id"
+
+        # br-old1 has an operator-managed interface; br-old2 is clean.
+        def unmanaged(_ovs_cli, bridge):
+            return ["bond0"] if bridge == "br-old1" else []
+
+        mocks["get_unmanaged_interfaces_on_bridge"].side_effect = unmanaged
+
+        mock_ovs_cli.list_bridges.return_value = ["br-old1", "br-old2"]
+        mock_ovs_cli.get_bridge_physnet_map.return_value = {
+            "br-old1": "physnet-old1",
+            "br-old2": "physnet-old2",
+        }
+        mock_ovs_cli.list_bridge_interfaces.return_value = []
+
+        # Execute
+        configure_ovn_external_networking(
+            bridge="br-ex",
+            physnet="physnet1",
+            interface="eth0",
+            bridge_mapping="",
+            enable_chassis_as_gw=True,
+            external_bridge_address=IPVANYNETWORK_UNSET,
+            ovs_cli=mock_ovs_cli,
+        )
+
+        # br-old1 must be preserved; br-old2 may be removed.
+        del_bridge_calls = [
+            call.args[0] for call in mock_ovs_cli.del_bridge.call_args_list
+        ]
+        assert "br-old1" not in del_bridge_calls
+        assert "br-old2" in del_bridge_calls
+
     def test_bridge_addition(
         self,
         mock_external_networking_deps,
@@ -281,6 +342,77 @@ class TestConfigureOvnExternalNetworking:
             mock_ovs_cli, "br-ex", "eth2"
         )
         assert mocks["del_interface_from_bridge"].call_count == 2
+
+    def test_unmanaged_interface_not_removed(
+        self,
+        mock_external_networking_deps,
+        mock_ovs_cli,
+    ):
+        """Operator-managed interfaces must not be removed (LP: #2150222).
+
+        Reproduces the reported scenario: bridge/physnet configured via the
+        deprecated options with no interface, while an operator has manually
+        attached bond0 to br-ex (no microstack-function=ext-port marker).
+        """
+        # Setup
+        mocks = mock_external_networking_deps
+        mocks["get_machine_id"].return_value = "test-machine-id"
+        # bond0 is not managed by this snap.
+        mocks["is_managed_port"].return_value = False
+
+        # Simulate existing state: br-ex has an operator-attached bond0.
+        mock_ovs_cli.list_bridges.return_value = ["br-ex"]
+        mock_ovs_cli.get_bridge_physnet_map.return_value = {"br-ex": "physnet1"}
+        mock_ovs_cli.list_bridge_interfaces.return_value = ["bond0"]
+
+        # Execute - deprecated config, no interface declared.
+        configure_ovn_external_networking(
+            bridge="br-ex",
+            physnet="physnet1",
+            interface="",
+            bridge_mapping="",
+            enable_chassis_as_gw=True,
+            external_bridge_address=IPVANYNETWORK_UNSET,
+            ovs_cli=mock_ovs_cli,
+        )
+
+        # bond0 must NOT be removed.
+        mocks["is_managed_port"].assert_called_once_with(mock_ovs_cli, "bond0")
+        mocks["del_interface_from_bridge"].assert_not_called()
+
+    def test_managed_interface_removed_others_preserved(
+        self,
+        mock_external_networking_deps,
+        mock_ovs_cli,
+    ):
+        """Only snap-managed interfaces are removed; operator ones are kept."""
+        # Setup
+        mocks = mock_external_networking_deps
+        mocks["get_machine_id"].return_value = "test-machine-id"
+        # eth1 is managed by the snap, bond0 is operator-managed.
+        mocks["is_managed_port"].side_effect = lambda _ovs_cli, iface: iface == "eth1"
+
+        # br-ex currently has the desired eth0, a stale managed eth1, and an
+        # operator-attached bond0.
+        mock_ovs_cli.list_bridges.return_value = ["br-ex"]
+        mock_ovs_cli.get_bridge_physnet_map.return_value = {"br-ex": "physnet1"}
+        mock_ovs_cli.list_bridge_interfaces.return_value = ["eth0", "eth1", "bond0"]
+
+        # Execute - configure only eth0.
+        configure_ovn_external_networking(
+            bridge="br-ex",
+            physnet="physnet1",
+            interface="eth0",
+            bridge_mapping="",
+            enable_chassis_as_gw=True,
+            external_bridge_address=IPVANYNETWORK_UNSET,
+            ovs_cli=mock_ovs_cli,
+        )
+
+        # Only the managed eth1 is removed; bond0 is preserved.
+        mocks["del_interface_from_bridge"].assert_called_once_with(
+            mock_ovs_cli, "br-ex", "eth1"
+        )
 
     def test_bridge_renaming(
         self,
@@ -801,3 +933,68 @@ class TestConfigureOvnExternalNetworking:
         mocks["ensure_link_up"].assert_not_called()
         mocks["get_machine_id"].assert_not_called()
         mocks["disable_chassis_as_gateway"].assert_not_called()
+
+
+class TestIsManagedPort:
+    """Tests for the _is_managed_port helper."""
+
+    def test_managed_port_returns_true(self, mock_ovs_cli):
+        """A port carrying the ext-port marker is reported as managed."""
+        mock_ovs_cli.find.return_value = {
+            "headings": ["name"],
+            "data": [["eth0"], ["eth1"]],
+        }
+
+        assert _is_managed_port(mock_ovs_cli, "eth1") is True
+        mock_ovs_cli.find.assert_called_once_with(
+            "Port", "external-ids:microstack-function=ext-port"
+        )
+
+    def test_unmanaged_port_returns_false(self, mock_ovs_cli):
+        """A port without the ext-port marker is reported as unmanaged."""
+        mock_ovs_cli.find.return_value = {
+            "headings": ["name"],
+            "data": [["eth0"]],
+        }
+
+        assert _is_managed_port(mock_ovs_cli, "bond0") is False
+
+    def test_no_managed_ports_returns_false(self, mock_ovs_cli):
+        """When no managed ports exist, any port is unmanaged."""
+        mock_ovs_cli.find.return_value = {"headings": ["name"], "data": []}
+
+        assert _is_managed_port(mock_ovs_cli, "bond0") is False
+
+
+class TestGetUnmanagedInterfacesOnBridge:
+    """Tests for the _get_unmanaged_interfaces_on_bridge helper."""
+
+    def test_returns_only_unmanaged_interfaces(self, mock_ovs_cli):
+        """Operator interfaces are returned; managed and self port excluded."""
+        # br-ex has its internal port, a managed eth0, and operator bond0.
+        mock_ovs_cli.list_bridge_interfaces.return_value = [
+            "br-ex",
+            "eth0",
+            "bond0",
+        ]
+        # Only eth0 carries the ext-port marker.
+        mock_ovs_cli.find.return_value = {
+            "headings": ["name"],
+            "data": [["eth0"]],
+        }
+
+        result = _get_unmanaged_interfaces_on_bridge(mock_ovs_cli, "br-ex")
+
+        assert result == ["bond0"]
+
+    def test_returns_empty_when_all_managed(self, mock_ovs_cli):
+        """No unmanaged interfaces when every port is managed."""
+        mock_ovs_cli.list_bridge_interfaces.return_value = ["br-ex", "eth0"]
+        mock_ovs_cli.find.return_value = {
+            "headings": ["name"],
+            "data": [["eth0"]],
+        }
+
+        result = _get_unmanaged_interfaces_on_bridge(mock_ovs_cli, "br-ex")
+
+        assert result == []
