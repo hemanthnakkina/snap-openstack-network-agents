@@ -60,6 +60,41 @@ def _del_external_nics_from_bridge(ovs_cli: OVSCli, external_bridge: str) -> Non
         _del_interface_from_bridge(ovs_cli, external_bridge, p)
 
 
+def _is_managed_port(ovs_cli: OVSCli, port_name: str) -> bool:
+    """Return whether a port is managed by openstack-network-agents.
+
+    Only ports added by this snap carry the
+    ``external_ids:microstack-function=ext-port`` marker. Interfaces attached
+    to a bridge by an operator (for example via MAAS/netplan) do not carry the
+    marker and must not be removed during reconciliation.
+
+    :param ovs_cli: OVSCli instance.
+    :param port_name: Name of the port to check.
+    :return: True if the port is managed by this snap, False otherwise.
+    """
+    output = ovs_cli.find("Port", "external-ids:microstack-function=ext-port")
+    name_idx = output["headings"].index("name")
+    managed_ports = {r[name_idx] for r in output["data"]}
+    return port_name in managed_ports
+
+
+def _get_unmanaged_interfaces_on_bridge(ovs_cli: OVSCli, bridge: str) -> list[str]:
+    """Return interfaces on a bridge that were not added by this snap.
+
+    The internal bridge port (same name as the bridge) and any port carrying
+    the ``microstack-function=ext-port`` marker are excluded. Anything left is
+    considered operator-managed (for example attached via MAAS/netplan).
+
+    :param ovs_cli: OVSCli instance.
+    :param bridge: Name of bridge.
+    :return: Sorted list of unmanaged interface names on the bridge.
+    """
+    interfaces = [
+        iface for iface in ovs_cli.list_bridge_interfaces(bridge) if iface != bridge
+    ]
+    return sorted(iface for iface in interfaces if not _is_managed_port(ovs_cli, iface))
+
+
 def _add_interface_to_bridge(
     ovs_cli: OVSCli, external_bridge: str, external_nic: str
 ) -> None:
@@ -350,11 +385,31 @@ def configure_ovn_external_networking(
 
     for bridge, change in changes["interface_changes"].items():
         for iface in change["removed"]:
+            # Only remove interfaces that this snap added. Interfaces attached
+            # by an operator (e.g. via MAAS/netplan) are not managed by us and
+            # must be left untouched (LP: #2150222).
+            if not _is_managed_port(ovs_cli, iface):
+                logging.info(
+                    f"Skipping removal of unmanaged interface {iface} from "
+                    f"bridge {bridge}"
+                )
+                continue
             logging.info(f"Removing interface {iface} from bridge {bridge}")
             _del_interface_from_bridge(ovs_cli, bridge, iface)
             # Adding interfaces is handled later.
 
     for bridge in changes["removed_bridges"]:
+        # Do not tear down a bridge that still carries operator-managed
+        # interfaces (e.g. uplinks/VLANs attached via MAAS/netplan). Deleting
+        # the bridge would also destroy those, breaking host connectivity
+        # (LP: #2150222).
+        unmanaged = _get_unmanaged_interfaces_on_bridge(ovs_cli, bridge)
+        if unmanaged:
+            logging.warning(
+                f"Skipping removal of ovs bridge {bridge}; it still has "
+                f"operator-managed interfaces: {', '.join(unmanaged)}"
+            )
+            continue
         logging.info(f"Removing ovs bridge {bridge}")
         ovs_cli.del_bridge(bridge)
 
